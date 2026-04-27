@@ -4,8 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 
 
-INPUT_PATH = Path("data/processed/harden_bucks_guard_comparison.csv")
-SUMMARY_PATH = Path("data/processed/harden_bucks_guard_summary.csv")
+HISTORICAL_INPUT_PATH = Path("data/processed/harden_bucks_guard_comparison.csv")
+SIMILAR_INPUT_PATH = Path("data/processed/harden_similar_creator_guards.csv")
 
 OUTPUT_DIR = Path("reports/final_dashboard")
 OUTPUT_PATH = OUTPUT_DIR / "Harden_Bucks_Performance_Fit_Dashboard.html"
@@ -16,11 +16,24 @@ DOCS_OUTPUT_PATH = DOCS_DIR / "index.html"
 
 HARDEN_COLOR = "#7C3AED"
 BUCKS_COLOR = "#00471B"
-ACCENT_COLOR = "#EEE1C6"
+CONTRACT_COLOR = "#C99700"
 DARK = "#111827"
 
+GROUP_COLORS = {
+    "James Harden": HARDEN_COLOR,
+    "Milwaukee Bucks Guard": BUCKS_COLOR,
+}
 
-def validate_input(df):
+CONTRACT_TIER_COLORS = {
+    "Max / Near-Max Creator": "#7C3AED",
+    "Premium Veteran Guard": "#2563EB",
+    "Mid-Tier Rotation Guard": "#C99700",
+    "Low-Cost Guard": "#059669",
+    "Contract Unknown": "#64748B",
+}
+
+
+def validate_historical_input(df):
     required_columns = [
         "SEASON",
         "PLAYER_NAME",
@@ -44,41 +57,73 @@ def validate_input(df):
     missing = [column for column in required_columns if column not in df.columns]
 
     if missing:
-        raise ValueError(f"Missing dashboard columns: {missing}")
+        raise ValueError(f"Missing historical dashboard columns: {missing}")
 
     if df.empty:
-        raise ValueError("Dashboard input is empty.")
+        raise ValueError("Historical dashboard input is empty.")
 
     if "James Harden" not in df["player_group"].unique():
-        raise ValueError("James Harden rows missing.")
+        raise ValueError("James Harden rows missing from historical dataset.")
 
 
-def build_summary(df):
-    harden = df[df["player_group"] == "James Harden"]
-    bucks = df[df["player_group"] == "Milwaukee Bucks Guard"]
+def validate_similar_input(df):
+    required_columns = [
+        "PLAYER_NAME",
+        "TEAM_ABBREVIATION",
+        "PTS",
+        "AST",
+        "TOV",
+        "AST_PCT",
+        "USG_PCT",
+        "TS_PCT",
+        "OFF_RATING",
+        "performance_argument_score",
+        "harden_similarity_score",
+        "aav",
+        "aav_millions",
+        "contract_tier",
+        "performance_score_per_1m_aav",
+    ]
+
+    missing = [column for column in required_columns if column not in df.columns]
+
+    if missing:
+        raise ValueError(f"Missing similar-player dashboard columns: {missing}")
+
+    if df.empty:
+        raise ValueError("Similar-player dashboard input is empty.")
+
+    if "James Harden" not in df["PLAYER_NAME"].values:
+        raise ValueError("James Harden missing from similar-player dataset.")
+
+
+def build_summary(historical_df, similar_df):
+    harden = historical_df[historical_df["player_group"] == "James Harden"]
+    bucks = historical_df[historical_df["player_group"] == "Milwaukee Bucks Guard"]
+
+    harden_current = similar_df[similar_df["PLAYER_NAME"] == "James Harden"].iloc[0]
 
     return {
         "harden_avg_pts": harden["PTS"].mean(),
         "bucks_avg_pts": bucks["PTS"].mean(),
         "harden_avg_ast": harden["AST"].mean(),
         "bucks_avg_ast": bucks["AST"].mean(),
-        "harden_avg_ast_pct": harden["AST_PCT"].mean(),
-        "bucks_avg_ast_pct": bucks["AST_PCT"].mean(),
         "harden_avg_creator": harden["half_court_creator_index"].mean(),
         "bucks_avg_creator": bucks["half_court_creator_index"].mean(),
-        "harden_avg_argument": harden["performance_argument_score"].mean(),
-        "bucks_avg_argument": bucks["performance_argument_score"].mean(),
+        "harden_current_similarity": harden_current["harden_similarity_score"],
+        "harden_current_aav": harden_current["aav_millions"],
+        "similar_players": len(similar_df),
     }
 
 
 def create_creation_trend_chart(df):
     harden = df[df["player_group"] == "James Harden"].sort_values("SEASON")
+
     bucks_avg = (
         df[df["player_group"] == "Milwaukee Bucks Guard"]
         .groupby("SEASON")
         .agg(
             avg_half_court_creator_index=("half_court_creator_index", "mean"),
-            avg_performance_argument_score=("performance_argument_score", "mean"),
         )
         .reset_index()
         .sort_values("SEASON")
@@ -122,7 +167,7 @@ def create_creation_trend_chart(df):
 
     fig.update_layout(
         title="Half-Court Creation: Harden vs Bucks Guard Average",
-        height=430,
+        height=420,
         margin=dict(l=70, r=40, t=60, b=60),
         xaxis_title="Season",
         yaxis_title="Half-Court Creator Index",
@@ -148,12 +193,7 @@ def create_playmaking_gap_chart(df):
         .reset_index()
     )
 
-    group_summary["color"] = group_summary["player_group"].map(
-        {
-            "James Harden": HARDEN_COLOR,
-            "Milwaukee Bucks Guard": BUCKS_COLOR,
-        }
-    )
+    group_summary["color"] = group_summary["player_group"].map(GROUP_COLORS)
 
     fig = go.Figure()
 
@@ -178,7 +218,7 @@ def create_playmaking_gap_chart(df):
 
     fig.update_layout(
         title="Playmaking Gap: Average Assists Per Game",
-        height=430,
+        height=420,
         margin=dict(l=70, r=40, t=60, b=70),
         xaxis_title="Player Group",
         yaxis_title="Assists Per Game",
@@ -227,7 +267,7 @@ def create_ast_pct_vs_usage_chart(df):
 
     fig.update_layout(
         title="Creation Load: Assist Percentage vs Usage",
-        height=430,
+        height=420,
         margin=dict(l=70, r=40, t=60, b=70),
         xaxis_title="Usage Percentage",
         yaxis_title="Assist Percentage",
@@ -289,8 +329,8 @@ def create_top_player_seasons_chart(df):
     )
 
     fig.update_layout(
-        title="Top Player-Seasons by Performance Argument Score",
-        height=430,
+        title="Top Historical Player-Seasons by Performance Argument Score",
+        height=420,
         margin=dict(l=230, r=60, t=60, b=50),
         xaxis_title="Performance Argument Score",
         yaxis_title="",
@@ -305,27 +345,152 @@ def create_top_player_seasons_chart(df):
     return fig
 
 
-def build_html(summary, fig_1, fig_2, fig_3, fig_4):
-    fig_1_html = fig_1.to_html(
-        full_html=False,
-        include_plotlyjs="cdn",
-        config={"displayModeBar": False},
+def create_similarity_chart(similar_df):
+    chart_df = (
+        similar_df.sort_values("harden_similarity_score", ascending=False)
+        .head(10)
+        .sort_values("harden_similarity_score", ascending=True)
+        .copy()
     )
-    fig_2_html = fig_2.to_html(
-        full_html=False,
-        include_plotlyjs=False,
-        config={"displayModeBar": False},
+
+    chart_df["label"] = (
+        chart_df["PLAYER_NAME"]
+        + " | "
+        + chart_df["TEAM_ABBREVIATION"]
     )
-    fig_3_html = fig_3.to_html(
-        full_html=False,
-        include_plotlyjs=False,
-        config={"displayModeBar": False},
+
+    colors = [
+        HARDEN_COLOR if player == "James Harden" else CONTRACT_TIER_COLORS.get(tier, "#64748B")
+        for player, tier in zip(chart_df["PLAYER_NAME"], chart_df["contract_tier"])
+    ]
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=chart_df["harden_similarity_score"],
+            y=chart_df["label"],
+            orientation="h",
+            marker=dict(color=colors),
+            text=chart_df["harden_similarity_score"].round(1),
+            textposition="inside",
+            insidetextanchor="end",
+            customdata=chart_df[
+                [
+                    "PTS",
+                    "AST",
+                    "AST_PCT",
+                    "USG_PCT",
+                    "TS_PCT",
+                    "performance_argument_score",
+                    "aav_millions",
+                    "contract_tier",
+                ]
+            ],
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                "Similarity to Harden: %{x:.1f}<br>"
+                "PTS: %{customdata[0]:.1f}<br>"
+                "AST: %{customdata[1]:.1f}<br>"
+                "AST%: %{customdata[2]:.3f}<br>"
+                "USG%: %{customdata[3]:.3f}<br>"
+                "TS%: %{customdata[4]:.3f}<br>"
+                "Performance Score: %{customdata[5]:.1f}<br>"
+                "AAV: $%{customdata[6]:.1f}M<br>"
+                "Contract Tier: %{customdata[7]}<br>"
+                "<extra></extra>"
+            ),
+        )
     )
-    fig_4_html = fig_4.to_html(
-        full_html=False,
-        include_plotlyjs=False,
-        config={"displayModeBar": False},
+
+    fig.update_layout(
+        title="Current Creator Guards: Similarity to Harden",
+        height=420,
+        margin=dict(l=210, r=60, t=60, b=50),
+        xaxis_title="Similarity Score",
+        yaxis_title="",
+        template="plotly_white",
+        showlegend=False,
+        font=dict(family="Arial", size=12, color=DARK),
     )
+
+    fig.update_xaxes(showgrid=True, gridcolor="#E5E7EB")
+    fig.update_yaxes(showgrid=False)
+
+    return fig
+
+
+def create_contract_value_chart(similar_df):
+    fig = go.Figure()
+
+    for tier, group in similar_df.groupby("contract_tier"):
+        fig.add_trace(
+            go.Scatter(
+                x=group["aav_millions"],
+                y=group["performance_argument_score"],
+                mode="markers+text",
+                name=tier,
+                text=group["PLAYER_NAME"],
+                textposition="top center",
+                marker=dict(
+                    size=group["harden_similarity_score"] * 0.35 + 10,
+                    color=CONTRACT_TIER_COLORS.get(tier, "#64748B"),
+                    opacity=0.78,
+                    line=dict(width=1, color="#111827"),
+                ),
+                customdata=group[
+                    [
+                        "TEAM_ABBREVIATION",
+                        "PTS",
+                        "AST",
+                        "TS_PCT",
+                        "harden_similarity_score",
+                        "performance_score_per_1m_aav",
+                    ]
+                ],
+                hovertemplate=(
+                    "<b>%{text}</b><br>"
+                    "Team: %{customdata[0]}<br>"
+                    "AAV: $%{x:.1f}M<br>"
+                    "Performance Score: %{y:.1f}<br>"
+                    "PTS: %{customdata[1]:.1f}<br>"
+                    "AST: %{customdata[2]:.1f}<br>"
+                    "TS%: %{customdata[3]:.3f}<br>"
+                    "Similarity to Harden: %{customdata[4]:.1f}<br>"
+                    "Performance Score per $1M AAV: %{customdata[5]:.2f}<br>"
+                    "<extra></extra>"
+                ),
+            )
+        )
+
+    fig.update_layout(
+        title="Contract Value vs Performance Argument Score",
+        height=420,
+        margin=dict(l=70, r=40, t=60, b=80),
+        xaxis_title="Average Annual Value ($M)",
+        yaxis_title="Performance Argument Score",
+        template="plotly_white",
+        font=dict(family="Arial", size=12, color=DARK),
+        legend=dict(orientation="h", y=-0.32, x=0.5, xanchor="center"),
+    )
+
+    fig.update_xaxes(showgrid=True, gridcolor="#E5E7EB")
+    fig.update_yaxes(showgrid=True, gridcolor="#E5E7EB")
+
+    return fig
+
+
+def build_html(summary, figures):
+    html_blocks = []
+
+    for index, fig in enumerate(figures):
+        html_blocks.append(
+            fig.to_html(
+                full_html=False,
+                include_plotlyjs="cdn" if index == 0 else False,
+                config={"displayModeBar": False},
+            )
+        )
 
     html = f"""
 <!DOCTYPE html>
@@ -468,28 +633,36 @@ def build_html(summary, fig_1, fig_2, fig_3, fig_4):
                 <div class="kpi-value">{summary["harden_avg_ast"]:.1f}</div>
             </div>
             <div class="kpi-card">
-                <div class="kpi-label">Bucks Guard APG</div>
-                <div class="kpi-value">{summary["bucks_avg_ast"]:.1f}</div>
-            </div>
-            <div class="kpi-card">
                 <div class="kpi-label">Creator Gap</div>
                 <div class="kpi-value">{summary["harden_avg_creator"] - summary["bucks_avg_creator"]:.1f}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Harden AAV Layer</div>
+                <div class="kpi-value">${summary["harden_current_aav"]:.1f}M</div>
             </div>
         </section>
 
         <section class="grid">
-            <div class="chart-card">{fig_1_html}</div>
-            <div class="chart-card">{fig_2_html}</div>
-            <div class="chart-card">{fig_3_html}</div>
-            <div class="chart-card">{fig_4_html}</div>
+            <div class="chart-card">{html_blocks[0]}</div>
+            <div class="chart-card">{html_blocks[1]}</div>
+            <div class="chart-card">{html_blocks[2]}</div>
+            <div class="chart-card">{html_blocks[3]}</div>
+            <div class="chart-card">{html_blocks[4]}</div>
+            <div class="chart-card">{html_blocks[5]}</div>
         </section>
 
         <section class="talking-points">
             <strong>Negotiation Performance Argument:</strong>
             Harden gives Milwaukee a proven half-court creation profile that the recent Bucks guard history has rarely matched.
             His value is not only scoring. It is advantage creation, assist volume, pace control, and late-clock organization.
-            For Milwaukee, the selling point is fit: Harden can reduce Giannis' creation burden, stabilize non-Giannis minutes,
-            and give the offense a second decision-maker who has repeatedly produced elite assist and creation seasons.
+            The similar-player contract layer shows that Harden belongs in the same creator conversation as premium guards.
+            For Milwaukee, the question is not whether Harden is cheap. The question is whether Milwaukee can secure elite creation
+            at a contract structure that protects flexibility while reducing Giannis' offensive burden.
+            <br><br>
+            <strong>Methodology Note:</strong>
+            Performance data is pulled through NBA API. Contract data is a manual public contract layer and should be verified before final submission.
+            AAV means average annual value. The Performance Argument Score is a custom negotiation metric combining playmaking, scoring efficiency,
+            offensive rating, turnover risk, assist percentage, usage, and true shooting.
         </section>
     </div>
 </body>
@@ -504,28 +677,28 @@ def build_html(summary, fig_1, fig_2, fig_3, fig_4):
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_csv(INPUT_PATH)
+    historical_df = pd.read_csv(HISTORICAL_INPUT_PATH)
+    similar_df = pd.read_csv(SIMILAR_INPUT_PATH)
 
-    validate_input(df)
+    validate_historical_input(historical_df)
+    validate_similar_input(similar_df)
 
-    summary = build_summary(df)
+    summary = build_summary(historical_df, similar_df)
 
-    fig_1 = create_creation_trend_chart(df)
-    fig_2 = create_playmaking_gap_chart(df)
-    fig_3 = create_ast_pct_vs_usage_chart(df)
-    fig_4 = create_top_player_seasons_chart(df)
+    figures = [
+        create_creation_trend_chart(historical_df),
+        create_playmaking_gap_chart(historical_df),
+        create_ast_pct_vs_usage_chart(historical_df),
+        create_top_player_seasons_chart(historical_df),
+        create_similarity_chart(similar_df),
+        create_contract_value_chart(similar_df),
+    ]
 
-    build_html(
-        summary=summary,
-        fig_1=fig_1,
-        fig_2=fig_2,
-        fig_3=fig_3,
-        fig_4=fig_4,
-    )
+    build_html(summary, figures)
 
     print("")
-    print("HARDEN BUCKS DASHBOARD COMPLETE")
-    print("--------------------------------")
+    print("HARDEN BUCKS DASHBOARD UPDATED")
+    print("------------------------------")
     print(f"Dashboard: {OUTPUT_PATH}")
     print(f"GitHub Pages copy: {DOCS_OUTPUT_PATH}")
     print("")
