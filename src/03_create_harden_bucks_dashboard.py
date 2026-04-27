@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -70,6 +71,7 @@ def validate_similar_input(df):
     required_columns = [
         "PLAYER_NAME",
         "TEAM_ABBREVIATION",
+        "AGE",
         "PTS",
         "AST",
         "TOV",
@@ -97,11 +99,76 @@ def validate_similar_input(df):
         raise ValueError("James Harden missing from similar-player dataset.")
 
 
+def get_harden_row(similar_df):
+    harden = similar_df[similar_df["PLAYER_NAME"] == "James Harden"]
+
+    if harden.empty:
+        raise ValueError("James Harden row missing from similar dataset.")
+
+    return harden.iloc[0]
+
+
+def get_decay_rate_for_age(age):
+    if age <= 31:
+        return 0.045
+    if age <= 33:
+        return 0.055
+    if age <= 35:
+        return 0.070
+    if age <= 37:
+        return 0.090
+    return 0.120
+
+
+def simulate_harden_trajectory(similar_df, threshold=32.0, max_years=5):
+    harden = get_harden_row(similar_df)
+
+    current_age = float(harden["AGE"])
+    current_score = float(harden["performance_argument_score"])
+
+    rows = []
+    age = current_age
+    score = current_score
+
+    rows.append(
+        {
+            "season_step": "Current",
+            "age": age,
+            "projected_score": score,
+            "status": "Starter-Level Creator" if score >= threshold else "Below Threshold",
+        }
+    )
+
+    productive_future_years = 0
+
+    for year in range(1, max_years + 1):
+        decay_rate = get_decay_rate_for_age(age)
+        score = score * (1 - decay_rate)
+        age = age + 1
+
+        if score >= threshold:
+            productive_future_years += 1
+
+        rows.append(
+            {
+                "season_step": f"+{year} Year",
+                "age": age,
+                "projected_score": score,
+                "status": "Starter-Level Creator" if score >= threshold else "Below Threshold",
+            }
+        )
+
+    trajectory_df = pd.DataFrame(rows)
+
+    return trajectory_df, productive_future_years
+
+
 def build_summary(historical_df, similar_df):
     harden = historical_df[historical_df["player_group"] == "James Harden"]
     bucks = historical_df[historical_df["player_group"] == "Milwaukee Bucks Guard"]
 
-    harden_current = similar_df[similar_df["PLAYER_NAME"] == "James Harden"].iloc[0]
+    harden_current = get_harden_row(similar_df)
+    trajectory_df, projected_productive_future_years = simulate_harden_trajectory(similar_df)
 
     return {
         "harden_avg_pts": harden["PTS"].mean(),
@@ -113,6 +180,10 @@ def build_summary(historical_df, similar_df):
         "harden_current_similarity": harden_current["harden_similarity_score"],
         "harden_current_aav": harden_current["aav_millions"],
         "similar_players": len(similar_df),
+        "harden_current_age": harden_current["AGE"],
+        "projected_productive_future_years": projected_productive_future_years,
+        "current_harden_score": harden_current["performance_argument_score"],
+        "age_curve_terminal_score": trajectory_df["projected_score"].iloc[-1],
     }
 
 
@@ -167,7 +238,7 @@ def create_creation_trend_chart(df):
 
     fig.update_layout(
         title="Half-Court Creation: Harden vs Bucks Guard Average",
-        height=420,
+        height=400,
         margin=dict(l=70, r=40, t=60, b=60),
         xaxis_title="Season",
         yaxis_title="Half-Court Creator Index",
@@ -218,7 +289,7 @@ def create_playmaking_gap_chart(df):
 
     fig.update_layout(
         title="Playmaking Gap: Average Assists Per Game",
-        height=420,
+        height=400,
         margin=dict(l=70, r=40, t=60, b=70),
         xaxis_title="Player Group",
         yaxis_title="Assists Per Game",
@@ -267,7 +338,7 @@ def create_ast_pct_vs_usage_chart(df):
 
     fig.update_layout(
         title="Creation Load: Assist Percentage vs Usage",
-        height=420,
+        height=400,
         margin=dict(l=70, r=40, t=60, b=70),
         xaxis_title="Usage Percentage",
         yaxis_title="Assist Percentage",
@@ -330,7 +401,7 @@ def create_top_player_seasons_chart(df):
 
     fig.update_layout(
         title="Top Historical Player-Seasons by Performance Argument Score",
-        height=420,
+        height=400,
         margin=dict(l=230, r=60, t=60, b=50),
         xaxis_title="Performance Argument Score",
         yaxis_title="",
@@ -405,7 +476,7 @@ def create_similarity_chart(similar_df):
 
     fig.update_layout(
         title="Current Creator Guards: Similarity to Harden",
-        height=420,
+        height=400,
         margin=dict(l=210, r=60, t=60, b=50),
         xaxis_title="Similarity Score",
         yaxis_title="",
@@ -465,13 +536,156 @@ def create_contract_value_chart(similar_df):
 
     fig.update_layout(
         title="Contract Value vs Performance Argument Score",
-        height=420,
+        height=400,
         margin=dict(l=70, r=40, t=60, b=80),
         xaxis_title="Average Annual Value ($M)",
         yaxis_title="Performance Argument Score",
         template="plotly_white",
         font=dict(family="Arial", size=12, color=DARK),
         legend=dict(orientation="h", y=-0.32, x=0.5, xanchor="center"),
+    )
+
+    fig.update_xaxes(showgrid=True, gridcolor="#E5E7EB")
+    fig.update_yaxes(showgrid=True, gridcolor="#E5E7EB")
+
+    return fig
+
+
+def create_age_performance_chart(similar_df):
+    df = similar_df.copy()
+
+    df["marker_color"] = np.where(df["PLAYER_NAME"] == "James Harden", HARDEN_COLOR, "#94A3B8")
+    df["marker_size"] = np.where(df["PLAYER_NAME"] == "James Harden", 22, 14)
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=df["AGE"],
+            y=df["performance_argument_score"],
+            mode="markers+text",
+            text=df["PLAYER_NAME"],
+            textposition="top center",
+            marker=dict(
+                size=df["marker_size"],
+                color=df["marker_color"],
+                opacity=0.85,
+                line=dict(width=1, color="#111827"),
+            ),
+            customdata=df[
+                [
+                    "TEAM_ABBREVIATION",
+                    "PTS",
+                    "AST",
+                    "TS_PCT",
+                    "aav_millions",
+                    "harden_similarity_score",
+                ]
+            ],
+            hovertemplate=(
+                "<b>%{text}</b><br>"
+                "Age: %{x:.0f}<br>"
+                "Performance Score: %{y:.1f}<br>"
+                "Team: %{customdata[0]}<br>"
+                "PTS: %{customdata[1]:.1f}<br>"
+                "AST: %{customdata[2]:.1f}<br>"
+                "TS%: %{customdata[3]:.3f}<br>"
+                "AAV: $%{customdata[4]:.1f}M<br>"
+                "Similarity to Harden: %{customdata[5]:.1f}<br>"
+                "<extra></extra>"
+            ),
+            showlegend=False,
+        )
+    )
+
+    valid = df[["AGE", "performance_argument_score"]].dropna()
+
+    if len(valid) >= 2:
+        coeffs = np.polyfit(valid["AGE"], valid["performance_argument_score"], 1)
+        x_line = np.linspace(valid["AGE"].min(), valid["AGE"].max(), 100)
+        y_line = coeffs[0] * x_line + coeffs[1]
+
+        fig.add_trace(
+            go.Scatter(
+                x=x_line,
+                y=y_line,
+                mode="lines",
+                name="Age-Performance Trend",
+                line=dict(color=CONTRACT_COLOR, width=3, dash="dot"),
+                hoverinfo="skip",
+            )
+        )
+
+    fig.update_layout(
+        title="Age vs Performance Argument Score",
+        height=400,
+        margin=dict(l=70, r=40, t=60, b=60),
+        xaxis_title="Age",
+        yaxis_title="Performance Argument Score",
+        template="plotly_white",
+        font=dict(family="Arial", size=12, color=DARK),
+        legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center"),
+    )
+
+    fig.update_xaxes(showgrid=True, gridcolor="#E5E7EB")
+    fig.update_yaxes(showgrid=True, gridcolor="#E5E7EB")
+
+    return fig
+
+
+def create_harden_trajectory_chart(similar_df):
+    trajectory_df, projected_productive_future_years = simulate_harden_trajectory(similar_df, threshold=32.0, max_years=5)
+
+    threshold_line = [32.0] * len(trajectory_df)
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=trajectory_df["age"],
+            y=trajectory_df["projected_score"],
+            mode="lines+markers+text",
+            name="James Harden Trajectory",
+            line=dict(color=HARDEN_COLOR, width=4),
+            marker=dict(size=10),
+            text=trajectory_df["season_step"],
+            textposition="top center",
+            customdata=trajectory_df[["status"]],
+            hovertemplate=(
+                "<b>James Harden</b><br>"
+                "Age: %{x:.0f}<br>"
+                "Projected Performance Score: %{y:.1f}<br>"
+                "Status: %{customdata[0]}<br>"
+                "<extra></extra>"
+            ),
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=trajectory_df["age"],
+            y=threshold_line,
+            mode="lines",
+            name="Starter-Level Threshold",
+            line=dict(color="#EF4444", width=3, dash="dash"),
+            hovertemplate=(
+                "<b>Threshold</b><br>"
+                "Age: %{x:.0f}<br>"
+                "Threshold Score: %{y:.1f}<br>"
+                "<extra></extra>"
+            ),
+        )
+    )
+
+    fig.update_layout(
+        title=f"Harden Aging Curve: Projected Productive Window = {projected_productive_future_years} More Years",
+        height=400,
+        margin=dict(l=70, r=40, t=60, b=60),
+        xaxis_title="Age",
+        yaxis_title="Projected Performance Argument Score",
+        template="plotly_white",
+        font=dict(family="Arial", size=12, color=DARK),
+        legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center"),
     )
 
     fig.update_xaxes(showgrid=True, gridcolor="#E5E7EB")
@@ -537,7 +751,7 @@ def build_html(summary, figures):
 
         .kpi-grid {{
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
+            grid-template-columns: repeat(6, 1fr);
             gap: 16px;
             margin-bottom: 24px;
         }}
@@ -596,9 +810,9 @@ def build_html(summary, figures):
             color: #111827;
         }}
 
-        @media (max-width: 1100px) {{
+        @media (max-width: 1200px) {{
             .kpi-grid {{
-                grid-template-columns: repeat(2, 1fr);
+                grid-template-columns: repeat(3, 1fr);
             }}
 
             .grid {{
@@ -637,8 +851,12 @@ def build_html(summary, figures):
                 <div class="kpi-value">{summary["harden_avg_creator"] - summary["bucks_avg_creator"]:.1f}</div>
             </div>
             <div class="kpi-card">
-                <div class="kpi-label">Harden AAV Layer</div>
-                <div class="kpi-value">${summary["harden_current_aav"]:.1f}M</div>
+                <div class="kpi-label">Harden Age</div>
+                <div class="kpi-value">{summary["harden_current_age"]:.0f}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Projected Productive Years</div>
+                <div class="kpi-value">{summary["projected_productive_future_years"]}</div>
             </div>
         </section>
 
@@ -649,6 +867,8 @@ def build_html(summary, figures):
             <div class="chart-card">{html_blocks[3]}</div>
             <div class="chart-card">{html_blocks[4]}</div>
             <div class="chart-card">{html_blocks[5]}</div>
+            <div class="chart-card">{html_blocks[6]}</div>
+            <div class="chart-card">{html_blocks[7]}</div>
         </section>
 
         <section class="talking-points">
@@ -656,13 +876,14 @@ def build_html(summary, figures):
             Harden gives Milwaukee a proven half-court creation profile that the recent Bucks guard history has rarely matched.
             His value is not only scoring. It is advantage creation, assist volume, pace control, and late-clock organization.
             The similar-player contract layer shows that Harden belongs in the same creator conversation as premium guards.
-            For Milwaukee, the question is not whether Harden is cheap. The question is whether Milwaukee can secure elite creation
-            at a contract structure that protects flexibility while reducing Giannis' offensive burden.
+            The age-performance view shows that he is older, but still materially above several active comparison guards in creation value.
+            The aging trajectory does not guarantee future output, but it supports a business case for a short-term competitive window.
             <br><br>
             <strong>Methodology Note:</strong>
             Performance data is pulled through NBA API. Contract data is a manual public contract layer and should be verified before final submission.
             AAV means average annual value. The Performance Argument Score is a custom negotiation metric combining playmaking, scoring efficiency,
-            offensive rating, turnover risk, assist percentage, usage, and true shooting.
+            offensive rating, turnover risk, assist percentage, usage, and true shooting. The aging curve is a scenario-based model with progressive
+            annual decay and a starter-level threshold set at 32.0.
         </section>
     </div>
 </body>
@@ -692,6 +913,8 @@ def main():
         create_top_player_seasons_chart(historical_df),
         create_similarity_chart(similar_df),
         create_contract_value_chart(similar_df),
+        create_age_performance_chart(similar_df),
+        create_harden_trajectory_chart(similar_df),
     ]
 
     build_html(summary, figures)
